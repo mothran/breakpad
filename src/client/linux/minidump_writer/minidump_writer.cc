@@ -270,6 +270,9 @@ class MinidumpWriter {
     *stack_copy = NULL;
     const void* stack;
     size_t stack_len;
+    if (dumper_->is_full_dump()) {
+      return true;
+    }
     if (dumper_->GetStackInfo(&stack, &stack_len, stack_pointer)) {
       UntypedMDRVA memory(&minidump_writer_);
       if (max_stack_len >= 0 &&

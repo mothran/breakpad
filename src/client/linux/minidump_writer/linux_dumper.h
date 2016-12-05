@@ -143,6 +143,9 @@ class LinuxDumper {
   pid_t crash_thread() const { return crash_thread_; }
   void set_crash_thread(pid_t crash_thread) { crash_thread_ = crash_thread; }
 
+  void set_full_dump() { make_full_dump = true; }
+  bool is_full_dump() { return make_full_dump; }
+
   // Concatenates the |root_prefix_| and |mapping| path. Writes into |path| and
   // returns true unless the string is too long.
   bool GetMappingAbsolutePath(const MappingInfo& mapping,
@@ -202,6 +205,9 @@ class LinuxDumper {
 
   // Info from /proc/<pid>/auxv
   wasteful_vector<elf_aux_val_t> auxv_;
+
+  // Toggle breakpad to create a full memory dump
+  bool make_full_dump;
 
 #if defined(__ANDROID__)
  private:

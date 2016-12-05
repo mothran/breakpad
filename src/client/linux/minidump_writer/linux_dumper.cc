@@ -262,7 +262,8 @@ LinuxDumper::LinuxDumper(pid_t pid, const char* root_prefix)
       crash_thread_(pid),
       threads_(&allocator_, 8),
       mappings_(&allocator_),
-      auxv_(&allocator_, AT_MAX + 1) {
+      auxv_(&allocator_, AT_MAX + 1),
+      make_full_dump(false) {
   assert(root_prefix_ && my_strlen(root_prefix_) < PATH_MAX);
   // The passed-in size to the constructor (above) is only a hint.
   // Must call .resize() to do actual initialization of the elements.

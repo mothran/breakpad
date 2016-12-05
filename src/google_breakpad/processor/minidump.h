@@ -1013,6 +1013,9 @@ class Minidump {
   }
   static uint32_t max_string_length() { return max_string_length_; }
 
+  void set_full_dump() { is_full_dump_ = true; }
+  bool is_full_dump() { return is_full_dump_; }
+
   virtual const MDRawHeader* header() const { return valid_ ? &header_ : NULL; }
 
   // Reads the CPU information from the system info stream and generates the
@@ -1160,6 +1163,9 @@ class Minidump {
   // construction or after a failed Read(); true following a successful
   // Read().
   bool                      valid_;
+
+  // Enable parsing for full memory dumps.
+  bool                      is_full_dump_;
 
   DISALLOW_COPY_AND_ASSIGN(Minidump);
 };

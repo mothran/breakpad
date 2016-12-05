@@ -1236,7 +1236,7 @@ const uint8_t* MinidumpMemoryRegion::GetMemory() const {
       return NULL;
     }
 
-    if (descriptor_->memory.data_size > max_bytes_) {
+    if (!minidump_->is_full_dump() && descriptor_->memory.data_size > max_bytes_) {
       BPLOG(ERROR) << "MinidumpMemoryRegion size " <<
                       descriptor_->memory.data_size << " exceeds maximum " <<
                       max_bytes_;
@@ -4313,7 +4313,8 @@ Minidump::Minidump(const string& path)
       path_(path),
       stream_(NULL),
       swap_(false),
-      valid_(false) {
+      valid_(false),
+      is_full_dump_(false) {
 }
 
 Minidump::Minidump(istream& stream)
@@ -4323,7 +4324,8 @@ Minidump::Minidump(istream& stream)
       path_(),
       stream_(&stream),
       swap_(false),
-      valid_(false) {
+      valid_(false),
+      is_full_dump_(false){
 }
 
 Minidump::~Minidump() {
