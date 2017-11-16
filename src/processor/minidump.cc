@@ -4959,7 +4959,7 @@ Minidump::Minidump(const string& path, bool hexdump, unsigned int hexdump_width)
       stream_(NULL),
       swap_(false),
       valid_(false),
-      is_full_dump_(false) {
+      is_full_dump_(false),
       hexdump_(hexdump),
       hexdump_width_(hexdump_width) {
 }
@@ -4972,7 +4972,7 @@ Minidump::Minidump(istream& stream)
       stream_(&stream),
       swap_(false),
       valid_(false),
-      is_full_dump_(false){
+      is_full_dump_(false),
       hexdump_(false),
       hexdump_width_(0) {
 }
