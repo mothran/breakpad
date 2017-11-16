@@ -44,7 +44,7 @@
 #include "client/linux/minidump_writer/linux_ptrace_dumper.h"
 #include "common/linux/file_id.h"
 #include "common/linux/linux_libc_support.h"
-#include "common/memory.h"
+#include "common/memory_allocator.h"
 
 namespace {
 
@@ -132,6 +132,9 @@ class MicrodumpWriter {
  public:
   MicrodumpWriter(const ExceptionHandler::CrashContext* context,
                   const MappingList& mappings,
+                  bool skip_dump_if_principal_mapping_not_referenced,
+                  uintptr_t address_within_principal_mapping,
+                  bool sanitize_stack,
                   const MicrodumpExtraInfo& microdump_extra_info,
                   LinuxDumper* dumper)
       : ucontext_(context ? &context->context : NULL),
@@ -140,6 +143,10 @@ class MicrodumpWriter {
 #endif
         dumper_(dumper),
         mapping_list_(mappings),
+        skip_dump_if_principal_mapping_not_referenced_(
+            skip_dump_if_principal_mapping_not_referenced),
+        address_within_principal_mapping_(address_within_principal_mapping),
+        sanitize_stack_(sanitize_stack),
         microdump_extra_info_(microdump_extra_info),
         log_line_(NULL),
         stack_copy_(NULL),
@@ -166,6 +173,7 @@ class MicrodumpWriter {
   void Dump() {
     CaptureResult stack_capture_result = CaptureCrashingThreadStack(-1);
     if (stack_capture_result == CAPTURE_UNINTERESTING) {
+      LogLine("Microdump skipped (uninteresting)");
       return;
     }
 
@@ -173,6 +181,7 @@ class MicrodumpWriter {
     DumpProductInformation();
     DumpOSInformation();
     DumpProcessType();
+    DumpCrashReason();
     DumpGPUInformation();
 #if !defined(__LP64__)
     DumpFreeSpace();
@@ -251,37 +260,22 @@ class MicrodumpWriter {
                              reinterpret_cast<const void*>(stack_lower_bound_),
                              stack_len_);
 
-    if (!microdump_extra_info_.suppress_microdump_based_on_interest_range)
-      return CAPTURE_OK;
+    if (!skip_dump_if_principal_mapping_not_referenced_) return CAPTURE_OK;
 
-    uintptr_t low_addr = microdump_extra_info_.interest_range_start;
-    uintptr_t high_addr = microdump_extra_info_.interest_range_end;
+    const MappingInfo* principal_mapping =
+        dumper_->FindMappingNoBias(address_within_principal_mapping_);
+    if (!principal_mapping) return CAPTURE_UNINTERESTING;
 
+    uintptr_t low_addr = principal_mapping->system_mapping_info.start_addr;
+    uintptr_t high_addr = principal_mapping->system_mapping_info.end_addr;
     uintptr_t pc = UContextReader::GetInstructionPointer(ucontext_);
     if (low_addr <= pc && pc <= high_addr) return CAPTURE_OK;
 
-    // Loop over all stack words that would have been on the stack in
-    // the target process. (i.e. ones that are >= |stack_pointer_| and
-    // < |stack_lower_bound_| + |stack_len_| in the target
-    // process).
-    // |stack_lower_bound_| is page aligned, and thus also pointer
-    // aligned. Because the stack pointer might be unaligned, we round
-    // the offset down to word alignment. |stack_pointer_| >
-    // |stack_lower_bound_|, so this never results in a negative
-    // offset.
-    // Regardless of the alignment of |stack_copy_|, the memory
-    // starting at |stack_copy_| + |offset| represents an aligned word
-    // in the target process.
-    uintptr_t offset =
-        ((stack_pointer_ - stack_lower_bound_) & ~(sizeof(uintptr_t) - 1));
-    for (uint8_t* sp = stack_copy_ + offset;
-         sp <= stack_copy_ + stack_len_ - sizeof(uintptr_t);
-         sp += sizeof(uintptr_t)) {
-      uintptr_t addr;
-      my_memcpy(&addr, sp, sizeof(uintptr_t));
-      if (low_addr <= addr && addr <= high_addr) return CAPTURE_OK;
+    if (dumper_->StackHasPointerToMapping(stack_copy_, stack_len_,
+                                          stack_pointer_ - stack_lower_bound_,
+                                          *principal_mapping)) {
+      return CAPTURE_OK;
     }
-
     return CAPTURE_UNINTERESTING;
   }
 
@@ -302,6 +296,16 @@ class MicrodumpWriter {
     } else {
       LogAppend("UNKNOWN");
     }
+    LogCommitLine();
+  }
+
+  void DumpCrashReason() {
+    LogAppend("R ");
+    LogAppend(dumper_->crash_signal());
+    LogAppend(" ");
+    LogAppend(dumper_->GetCrashSignalString());
+    LogAppend(" ");
+    LogAppend(dumper_->crash_address());
     LogCommitLine();
   }
 
@@ -377,6 +381,11 @@ class MicrodumpWriter {
   }
 
   void DumpThreadStack() {
+    if (sanitize_stack_) {
+      dumper_->SanitizeStackCopy(stack_copy_, stack_len_, stack_pointer_,
+                                 stack_pointer_ - stack_lower_bound_);
+    }
+
     LogAppend("S 0 ");
     LogAppend(stack_pointer_);
     LogAppend(" ");
@@ -485,6 +494,12 @@ class MicrodumpWriter {
 
 #if !defined(__LP64__)
   void DumpFreeSpace() {
+    const MappingInfo* stack_mapping = nullptr;
+    ThreadInfo info;
+    if (dumper_->GetThreadInfoByIndex(dumper_->GetMainThreadIndex(), &info)) {
+      stack_mapping = dumper_->FindMappingNoBias(info.stack_pointer);
+    }
+
     const google_breakpad::wasteful_vector<MappingInfo*>& mappings =
         dumper_->mappings();
     if (mappings.size() == 0) return;
@@ -515,6 +530,14 @@ class MicrodumpWriter {
       while (curr != mappings.size() - 1 &&
              MappingsAreAdjacent(*mappings[curr], *mappings[curr + 1])) {
         ++curr;
+      }
+
+      if (mappings[curr] == stack_mapping) {
+        // Because we can't determine the top of userspace mappable
+        // memory we treat the start of the process stack as the top
+        // of the allocatable address space. Once we reach
+        // |stack_mapping| we are done scanning for free space regions.
+        break;
       }
 
       size_t next = NextOrderedMapping(mappings, curr);
@@ -581,12 +604,15 @@ class MicrodumpWriter {
 
   void* Alloc(unsigned bytes) { return dumper_->allocator()->Alloc(bytes); }
 
-  const struct ucontext* const ucontext_;
+  const ucontext_t* const ucontext_;
 #if !defined(__ARM_EABI__) && !defined(__mips__)
   const google_breakpad::fpstate_t* const float_state_;
 #endif
   LinuxDumper* dumper_;
   const MappingList& mapping_list_;
+  bool skip_dump_if_principal_mapping_not_referenced_;
+  uintptr_t address_within_principal_mapping_;
+  bool sanitize_stack_;
   const MicrodumpExtraInfo microdump_extra_info_;
   char* log_line_;
 
@@ -601,7 +627,7 @@ class MicrodumpWriter {
   // crashed process. |stack_lower_bound_| <= |stack_pointer_|
   uintptr_t stack_lower_bound_;
 
-  // The stack pointer in the crashed process.
+  // The stack pointer of the crashed thread.
   uintptr_t stack_pointer_;
 };
 }  // namespace
@@ -612,6 +638,9 @@ bool WriteMicrodump(pid_t crashing_process,
                     const void* blob,
                     size_t blob_size,
                     const MappingList& mappings,
+                    bool skip_dump_if_principal_mapping_not_referenced,
+                    uintptr_t address_within_principal_mapping,
+                    bool sanitize_stack,
                     const MicrodumpExtraInfo& microdump_extra_info) {
   LinuxPtraceDumper dumper(crashing_process);
   const ExceptionHandler::CrashContext* context = NULL;
@@ -624,7 +653,10 @@ bool WriteMicrodump(pid_t crashing_process,
     dumper.set_crash_signal(context->siginfo.si_signo);
     dumper.set_crash_thread(context->tid);
   }
-  MicrodumpWriter writer(context, mappings, microdump_extra_info, &dumper);
+  MicrodumpWriter writer(context, mappings,
+                         skip_dump_if_principal_mapping_not_referenced,
+                         address_within_principal_mapping, sanitize_stack,
+                         microdump_extra_info, &dumper);
   if (!writer.Init())
     return false;
   writer.Dump();

@@ -43,17 +43,7 @@ AM_CXXFLAGS += -I$(top_srcdir)/src/common/android/include
 AM_CXXFLAGS += -I$(top_srcdir)/src/common/android/testing/include
 endif
 
-if GCC
-# These are good warnings to be treated as errors
-AM_CXXFLAGS += \
-	-Werror=missing-braces \
-	-Werror=non-virtual-dtor \
-	-Werror=overloaded-virtual \
-	-Werror=reorder \
-	-Werror=sign-compare \
-	-Werror=unused-variable \
-	-Werror=vla
-endif
+AM_CXXFLAGS += $(WARN_CXXFLAGS)
 
 if LINUX_HOST
 # Build as PIC on Linux, for linux_client_unittest_shlib
@@ -416,7 +406,8 @@ CLEANFILES += \
 	src/client/linux/linux_client_unittest_shlib
 
 check_PROGRAMS += \
-	src/client/linux/linux_client_unittest
+	src/client/linux/linux_client_unittest \
+	src/common/linux/google_crashdump_uploader_test
 
 if !DISABLE_TOOLS
 check_PROGRAMS += \
@@ -487,7 +478,7 @@ src_client_linux_linux_client_unittest_shlib_SOURCES = \
 	src/common/linux/linux_libc_support_unittest.cc \
 	src/common/linux/tests/auto_testfile.h \
 	src/common/linux/tests/crash_generator.cc \
-	src/common/memory_unittest.cc \
+	src/common/memory_allocator_unittest.cc \
 	src/common/tests/auto_tempdir.h \
 	src/common/tests/file_utils.cc \
 	src/common/tests/file_utils.h \
@@ -578,6 +569,7 @@ src_tools_linux_dump_syms_dump_syms_SOURCES = \
 	src/common/dwarf_line_to_module.cc \
 	src/common/language.cc \
 	src/common/module.cc \
+	src/common/path_helper.cc \
 	src/common/stabs_reader.cc \
 	src/common/stabs_to_module.cc \
 	src/common/dwarf/bytereader.cc \
@@ -602,6 +594,7 @@ src_tools_linux_dump_syms_dump_syms_LDADD = \
 
 src_tools_linux_md2core_minidump_2_core_SOURCES = \
 	src/common/linux/memory_mapped_file.cc \
+	src/common/path_helper.cc \
 	src/tools/linux/md2core/minidump-2-core.cc \
 	src/tools/linux/md2core/minidump_memory_range.h
 
@@ -625,6 +618,7 @@ src_tools_mac_dump_syms_dump_syms_mac_SOURCES = \
 	src/common/language.cc \
 	src/common/md5.cc \
 	src/common/module.cc \
+	src/common/path_helper.cc \
 	src/common/stabs_reader.cc \
 	src/common/stabs_to_module.cc \
 	src/common/dwarf/bytereader.cc \
@@ -664,6 +658,7 @@ src_common_dumper_unittest_SOURCES = \
 	src/common/memory_range_unittest.cc \
 	src/common/module.cc \
 	src/common/module_unittest.cc \
+	src/common/path_helper.cc \
 	src/common/stabs_reader.cc \
 	src/common/stabs_reader_unittest.cc \
 	src/common/stabs_to_module.cc \
@@ -721,6 +716,7 @@ src_common_mac_macho_reader_unittest_SOURCES = \
 	src/common/language.cc \
 	src/common/md5.cc \
 	src/common/module.cc \
+	src/common/path_helper.cc \
 	src/common/stabs_reader.cc \
 	src/common/stabs_to_module.cc \
 	src/common/test_assembler.cc \
@@ -746,6 +742,17 @@ src_common_mac_macho_reader_unittest_LDADD = \
 	$(TEST_LIBS) \
 	$(PTHREAD_CFLAGS) $(PTHREAD_LIBS)
 endif
+
+src_common_linux_google_crashdump_uploader_test_SOURCES = \
+	src/common/linux/google_crashdump_uploader.cc \
+	src/common/linux/google_crashdump_uploader_test.cc \
+	src/common/linux/libcurl_wrapper.cc
+src_common_linux_google_crashdump_uploader_test_CPPFLAGS = \
+	$(AM_CPPFLAGS) $(TEST_CFLAGS)
+src_common_linux_google_crashdump_uploader_test_LDADD = \
+	$(TEST_LIBS) \
+	$(PTHREAD_CFLAGS) $(PTHREAD_LIBS) \
+	-ldl
 
 src_tools_linux_md2core_minidump_2_core_unittest_SOURCES = \
 	src/tools/linux/md2core/minidump_memory_range_unittest.cc
@@ -1185,6 +1192,7 @@ src_processor_minidump_dump_LDADD = \
 src_processor_microdump_stackwalk_SOURCES = \
 	src/processor/microdump_stackwalk.cc
 src_processor_microdump_stackwalk_LDADD = \
+	src/common/path_helper.o \
 	src/processor/basic_code_modules.o \
 	src/processor/basic_source_line_resolver.o \
 	src/processor/call_stack.o \
@@ -1218,6 +1226,7 @@ src_processor_microdump_stackwalk_LDADD = \
 src_processor_minidump_stackwalk_SOURCES = \
 	src/processor/minidump_stackwalk.cc
 src_processor_minidump_stackwalk_LDADD = \
+	src/common/path_helper.o \
 	src/processor/basic_code_modules.o \
 	src/processor/basic_source_line_resolver.o \
 	src/processor/call_stack.o \
@@ -1375,6 +1384,7 @@ EXTRA_DIST = \
 	src/processor/testdata/microdump.stackwalk-arm.out \
 	src/processor/testdata/microdump.stackwalk.machine_readable-arm64.out \
 	src/processor/testdata/microdump.stackwalk.machine_readable-arm.out \
+	src/processor/testdata/microdump-withcrashreason.dmp \
 	src/processor/testdata/microdump-x86.dmp \
 	src/processor/testdata/minidump2.dmp \
 	src/processor/testdata/minidump2.dump.out \
